@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub use cw721_base::{ContractError, InstantiateMsg, MintMsg, MinterResponse, QueryMsg};
 
-use crate::state::USERNAMES;
+use crate::state::NAMES;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, JsonSchema, Debug, Default)]
 pub struct Trait {
@@ -80,11 +80,6 @@ pub mod entry {
     }
 }
 
-pub fn get_path_parts(path: &str) -> Vec<&str> {
-    let split = path.split("/");
-    split.collect()
-}
-
 pub fn mint(
     contract: Cw721MetadataContract,
     deps: DepsMut,
@@ -92,34 +87,45 @@ pub fn mint(
     info: MessageInfo,
     msg: MintMsg<Extension>,
 ) -> Result<Response, ContractError> {
-    let minter = contract.minter.load(deps.storage)?;
-    let address_trying_to_mint = info.sender.clone();
 
-    if address_trying_to_mint != minter {
-        return Err(ContractError::Unauthorized {});
-    }
+    // get the name in question.
+    // the `token_id` is the name.
+    let name = &msg.token_id;
+    // TODO work out validation logic
+    //      >=128 bytes?
+    //      other rules?
+    //
+
+    // TODO names should be unique.
+    // check that no name is already taken.
+    // let head: &str = path_parts.first().unwrap()
+    let owner_addr: Addr = NAMES.load(deps.storage, &name)
+
+
+    // TODO test this code
+    // let minter = contract.minter.load(deps.storage)?;
+    // let address_trying_to_mint = info.sender.clone();
+    // if address_trying_to_mint != minter {
+    //     return Err(ContractError::Unauthorized {});
+    // }
+    //
+
+    // TODO  test this
+    // if we are trying to mint a subdomain,
+    // check that the root is owned by the same address
+    // let path_parts = get_path_parts(&username);
+    // if path_parts.len() > 1 {
+    //     let root_username = path_parts.clone().into_iter().nth(0).unwrap();
+    //     // look up owner of root id
+    //     let root_id_owner_addr = USERNAMES.load(deps.storage, &root_username)?;
+    //     if address_trying_to_mint != root_id_owner_addr {
+    //         return Err(ContractError::Unauthorized {});
+    //     }
+    // }
 
     // validate owner addr
     let owner_address = deps.api.addr_validate(&msg.owner)?;
 
-    // username == token_id
-    // validate username length. this, or to 128 bytes?
-    let username = &msg.token_id;
-    if username.chars().count() > 20 {
-        return Err(ContractError::Unauthorized {});
-    }
-
-    // if we are trying to mint a subdomain,
-    // check that the root is owned by the same address
-    let path_parts = get_path_parts(&username);
-    if path_parts.len() > 1 {
-        let root_username = path_parts.clone().into_iter().nth(0).unwrap();
-        // look up owner of root id
-        let root_id_owner_addr = USERNAMES.load(deps.storage, &root_username)?;
-        if address_trying_to_mint != root_id_owner_addr {
-            return Err(ContractError::Unauthorized {});
-        }
-    }
 
     // create the token
     // this will fail if token_id (i.e. username)
@@ -140,7 +146,7 @@ pub fn mint(
     contract.increment_tokens(deps.storage)?;
 
     // set up secondary indexes
-    USERNAMES.save(deps.storage, &username, &owner_address)?;
+    NAMES.save(deps.storage, &name, &owner_address)?;
 
     Ok(Response::new()
         .add_attribute("action", "mint")
