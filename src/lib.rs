@@ -1,6 +1,6 @@
 pub mod state;
 
-use cosmwasm_std::{DepsMut, Empty, Env, MessageInfo, Response};
+use cosmwasm_std::{DepsMut, Empty, Env, MessageInfo, Response, StdResult, Addr};
 
 use cw721_base::state::TokenInfo;
 use schemars::JsonSchema;
@@ -18,6 +18,23 @@ pub struct Trait {
 }
 
 pub type Route = String;
+
+// TODO - queries
+// #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+// #[serde(rename_all = "snake_case")]
+// pub enum MyQueryMsg {
+//     Base(QueryMsg),
+//     RouteQuery {
+//         // route to query
+//         route: String
+//     },
+// }
+
+// #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+// pub struct RouteResponse {
+//     pub address: String, // TODO - address
+//     pub remainingRoute: String, // TODO route we haven't returned anything on yet
+// }
 
 // see: https://docs.opensea.io/docs/metadata-standards
 #[derive(Serialize, Deserialize, Clone, PartialEq, JsonSchema, Debug, Default)]
@@ -42,7 +59,7 @@ pub mod entry {
     use super::*;
 
     use cosmwasm_std::entry_point;
-    use cosmwasm_std::{Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+    use cosmwasm_std::{Binary, Deps, DepsMut, Env, MessageInfo, Response};
 
     // This is a simple type to let us handle empty extensions
 
@@ -77,8 +94,37 @@ pub mod entry {
     #[entry_point]
     pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         Cw721MetadataContract::default().query(deps, env, msg)
+            // TODO:
+    //     match msg {
+    //         MyQueryMsg::RouteQuery {
+    //             route,
+    //         } => to_binary(&query_route(
+    //             deps,
+    //             route,
+    //         ))
+    //     }
     }
 }
+
+// pub fn query_route (
+//     deps: Deps,
+//     name: String,
+// ) -> StdResult<RouteResponse> {
+//     Ok(RouteResponse {
+//         address: "Hi".to_string(),
+//         remainingRoute: "/rest/of/query".to_string()
+//     })
+// }
+
+
+// TODO allow people to update the data at their address
+// pub fn update(
+//     contract: Cw721MetadataContract,
+//     deps: DepsMut,
+//     _env: Env,
+//     info: MessageInfo,
+//     msg: MintMsg<Extension>,
+// ) -> Result<Response, >
 
 pub fn mint(
     contract: Cw721MetadataContract,
@@ -93,35 +139,8 @@ pub fn mint(
     let name = &msg.token_id;
     // TODO work out validation logic
     //      >=128 bytes?
+    //      no '/' (as that would confuse splitter)?
     //      other rules?
-    //
-
-    // TODO names should be unique.
-    // check that no name is already taken.
-    // let head: &str = path_parts.first().unwrap()
-    let owner_addr: Addr = NAMES.load(deps.storage, &name)
-
-
-    // TODO test this code
-    // let minter = contract.minter.load(deps.storage)?;
-    // let address_trying_to_mint = info.sender.clone();
-    // if address_trying_to_mint != minter {
-    //     return Err(ContractError::Unauthorized {});
-    // }
-    //
-
-    // TODO  test this
-    // if we are trying to mint a subdomain,
-    // check that the root is owned by the same address
-    // let path_parts = get_path_parts(&username);
-    // if path_parts.len() > 1 {
-    //     let root_username = path_parts.clone().into_iter().nth(0).unwrap();
-    //     // look up owner of root id
-    //     let root_id_owner_addr = USERNAMES.load(deps.storage, &root_username)?;
-    //     if address_trying_to_mint != root_id_owner_addr {
-    //         return Err(ContractError::Unauthorized {});
-    //     }
-    // }
 
     // validate owner addr
     let owner_address = deps.api.addr_validate(&msg.owner)?;
@@ -200,37 +219,37 @@ mod tests {
             extension: Some(meta.clone()),
         });
 
-        // random cannot mint
+        // CHECK - random cannot mint
         let random = mock_info("random", &[]);
         let err = contract
             .execute(deps.as_mut(), mock_env(), random, mint_msg.clone())
             .unwrap_err();
         assert_eq!(err, ContractError::Unauthorized {});
 
-        // minter can mint
+        // CHECK - minter can mint
         let allowed = mock_info(MINTER, &[]);
         let _ = contract
-            .execute(deps.as_mut(), mock_env(), allowed, mint_msg)
+            .execute(deps.as_mut(), mock_env(), allowed, mint_msg.clone())
             .unwrap();
+        // CHECK - info is correct
+        let info = contract.nft_info(deps.as_ref(), token_id.clone()).unwrap();
+        assert_eq!(
+            info,
+            NftInfoResponse::<Extension> {
+                token_uri: Some(token_uri.clone()),
+                extension: Some(meta.clone()),
+            }
+        );
 
-        // ensure num tokens increases
+        // CHECK - ensure num tokens increases
         let count = contract.num_tokens(deps.as_ref()).unwrap();
         assert_eq!(1, count.count);
+
 
         // unknown nft returns error
         let _ = contract
             .nft_info(deps.as_ref(), "unknown".to_string())
             .unwrap_err();
-
-        // this nft info is correct
-        let info = contract.nft_info(deps.as_ref(), token_id.clone()).unwrap();
-        assert_eq!(
-            info,
-            NftInfoResponse::<Extension> {
-                token_uri: Some(token_uri),
-                extension: Some(meta.clone()),
-            }
-        );
 
         // owner info is correct
         let owner = contract
@@ -249,7 +268,8 @@ mod tests {
             ..Metadata::default()
         };
 
-        // CHECK: cannot mint same token_id again
+        // CHECK: Names should be unique.
+        // Cannot mint same token_id again
         let mint_msg2 = ExecuteMsg::Mint(MintMsg::<Extension> {
             token_id: token_id.clone(),
             owner: String::from("hercules"),
@@ -339,6 +359,68 @@ mod tests {
             tokens.tokens
         );
     }
+
+    #[test]
+    fn querying () {
+
+        let mut deps = mock_dependencies();
+        let contract = setup_contract(deps.as_mut());
+
+        // mint an example name
+
+        let token_id = "jeff".to_string();
+        let token_uri = "https://www.merriam-webster.com/dictionary/petrify".to_string();
+
+        let meta = Metadata {
+            twitter_id: Some(String::from("@jeff-vader")),
+            ..Metadata::default()
+        };
+
+        let mint_msg = ExecuteMsg::Mint(MintMsg::<Extension> {
+            token_id: token_id.clone(),
+            owner: String::from("jeff-vader"),
+            token_uri: Some(token_uri.clone()),
+            extension: Some(meta.clone()),
+        });
+
+        let allowed = mock_info(MINTER, &[]);
+        let _ = contract
+            .execute(deps.as_mut(), mock_env(), allowed, mint_msg.clone())
+            .unwrap();
+
+        // // TODO now let's query that name
+        // let query = QueryMsg {
+
+        // }
+        // let err = contract
+        //     .query(deps, mock_env(), mint_msg.clone())
+        //     .unwrap_err();
+
+        // TODO can't query a name that doesn't exist!
+
+    }
+
+
+        // // TODO CHECK - that minter can update the metadata at their owned ID later later.
+        // let meta_updated = Metadata {
+        //     twitter_id: Some(String::from("@jeff-vader420")),
+        //     ..Metadata::default()
+        // };
+        // let mint_msg_update = ExecuteMsg::Mint(MintMsg::<Extension> {
+        //     token_id: token_id.clone(),
+        //     owner: String::from("jeff-vader"),
+        //     token_uri: Some(token_uri.clone()),
+        //     extension: Some(meta_updated.clone()),
+        // });
+        // // CHECK - assure this actually updates?
+        // assert_eq!(
+        //     info,
+        //     NftInfoResponse::<Extension> {
+        //         token_uri: Some(token_uri.clone()),
+        //         extension: Some(meta_updated.clone()),
+        //     }
+        // );
+
 
     #[test]
     fn use_metadata_extension() {
